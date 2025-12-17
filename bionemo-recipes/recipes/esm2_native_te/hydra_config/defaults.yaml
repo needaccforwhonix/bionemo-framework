@@ -75,3 +75,8 @@ checkpoint:
 
 logger:
   frequency: 100
+
+fp8_stats_config:
+  enabled: false
+  fp8_stats_file: null
+  fp8_log_dir: null

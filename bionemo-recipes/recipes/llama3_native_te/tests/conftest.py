@@ -33,3 +33,26 @@ def recipe_path() -> Path:
 def tokenizer_path(recipe_path):
     """Get the path to the nucleotide tokenizer."""
     return str(recipe_path / "tokenizers" / "nucleotide_fast_tokenizer")
+
+
+@pytest.fixture(autouse=True)
+def debug_api_cleanup():
+    """Ensure nvdlfw_inspect does not stay initialized across tests."""
+    yield
+    try:
+        import nvdlfw_inspect.api as debug_api
+
+        debug_api.end_debug()
+    except Exception:  # pragma: no cover - best-effort cleanup for optional dependency
+        pass
+
+
+def pytest_collection_modifyitems(items):
+    """Run FP8 stats logging tests first to avoid late debug initialization."""
+    stats_test_names = {
+        "test_sanity_ddp_fp8_stats_logging",
+        "test_sanity_fsdp2_fp8_stats_logging",
+    }
+    stats_tests = [item for item in items if item.name in stats_test_names]
+    other_tests = [item for item in items if item.name not in stats_test_names]
+    items[:] = stats_tests + other_tests

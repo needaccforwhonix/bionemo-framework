@@ -14,10 +14,12 @@
 # limitations under the License.
 
 import logging
+import os
 from contextlib import nullcontext
 from pathlib import Path
 
 import hydra
+import nvdlfw_inspect.api as debug_api
 import torch
 import transformer_engine.pytorch
 from omegaconf import DictConfig, OmegaConf
@@ -55,6 +57,32 @@ def main(args: DictConfig) -> float | None:
     torch.distributed.init_process_group(backend="nccl", device_id=device)
     torch.cuda.set_device(dist_config.local_rank)
 
+    # TE Debug feature logging - MUST be done BEFORE FSDP wrapping
+    if args.fp8_stats_config.enabled and not args.fp8_config.enabled:
+        raise ValueError(
+            "fp8_stats_config.enabled is true but fp8_config.enabled is false, please set fp8_config.enabled to true in the config if you wish to collect FP8 stats"
+        )
+
+    if args.fp8_stats_config.enabled:
+        fp8_stats_file = (
+            args.fp8_stats_config.fp8_stats_file
+            if args.fp8_stats_config.fp8_stats_file
+            else "fp8_debugging_stats.yaml"
+        )
+        fp8_log_dir = (
+            args.fp8_stats_config.fp8_log_dir if args.fp8_stats_config.fp8_log_dir else "./log_fsdp2_fp8_stats"
+        )
+        # Make a subdir for the current rank (using global rank to ensure unique dirs across nodes).
+        fp8_log_dir = os.path.join(fp8_log_dir, f"rank_{dist_config.rank}")
+        os.makedirs(fp8_log_dir, exist_ok=True)
+        logger.info(f"Logging FP8 stats to {fp8_log_dir}")
+        debug_api.initialize(
+            config_file=fp8_stats_file,
+            feature_dirs=["/usr/local/lib/python3.12/dist-packages/transformer_engine/debug/features/"],
+            log_dir=fp8_log_dir,
+            default_logging_enabled=True,
+        )
+
     # Create a device mesh for FSDP.
     device_mesh = init_device_mesh(
         "cuda",
@@ -86,6 +114,7 @@ def main(args: DictConfig) -> float | None:
 
     # We call the transformer stack "layers" in our TE models, but it's called "layer" in the original ESM-2 models.
     transformer_stack = model.esm.encoder.layers if hasattr(model.esm.encoder, "layers") else model.esm.encoder.layer
+
     for layer in transformer_stack:
         fully_shard(layer, mesh=device_mesh["dp"])
     fully_shard(model, mesh=device_mesh["dp"])
@@ -99,6 +128,9 @@ def main(args: DictConfig) -> float | None:
         else:
             model.to_empty(device=device)
             model.apply(model._init_weights)
+    # Assign names to layers so debug API can identify them - Must be done before FSDP wrapping
+    if args.fp8_stats_config.enabled:
+        debug_api.infer_and_assign_layer_names(model)
 
     # Create optimizer. Convert OmegaConf to regular dict to avoid serialization issues (BIONEMO-2873).
     optimizer = AdamW(model.parameters(), **OmegaConf.to_container(args.adamw_kwargs, resolve=True))  # type: ignore
@@ -152,6 +184,10 @@ def main(args: DictConfig) -> float | None:
             # Step optimizer.
             optimizer.step()
             scheduler.step()
+
+            if args.fp8_stats_config.enabled:
+                debug_api.step()
+
             optimizer.zero_grad()
 
             perf_logger.log_step(

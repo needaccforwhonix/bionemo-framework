@@ -14,9 +14,11 @@
 # limitations under the License.
 
 import logging
+import os
 from pathlib import Path
 
 import hydra
+import nvdlfw_inspect.api as debug_api
 import torch
 import transformer_engine.pytorch
 from omegaconf import DictConfig
@@ -50,6 +52,29 @@ def main(args: DictConfig) -> float | None:
     torch.distributed.init_process_group(backend="nccl", device_id=device)
     torch.cuda.set_device(dist_config.local_rank)
 
+    # TE Debug feature logging
+    if args.fp8_stats_config.enabled and not args.fp8_config.enabled:
+        raise ValueError(
+            "fp8_stats_config.enabled is true but fp8_config.enabled is false, please set fp8_config.enabled to true in the config if you wish to collect FP8 stats"
+        )
+
+    if args.fp8_stats_config.enabled:
+        fp8_stats_file = (
+            args.fp8_stats_config.fp8_stats_file
+            if args.fp8_stats_config.fp8_stats_file
+            else "fp8_debugging_stats.yaml"
+        )
+        fp8_log_dir = args.fp8_stats_config.fp8_log_dir if args.fp8_stats_config.fp8_log_dir else "./log_ddp_fp8_stats"
+        # Make a subdir for the current rank (using global rank to ensure unique dirs across nodes).
+        fp8_log_dir = os.path.join(fp8_log_dir, f"rank_{dist_config.rank}")
+        os.makedirs(fp8_log_dir, exist_ok=True)
+        logger.info(f"Logging FP8 stats to {fp8_log_dir}")
+        debug_api.initialize(
+            config_file=fp8_stats_file,
+            feature_dirs=["/usr/local/lib/python3.12/dist-packages/transformer_engine/debug/features/"],
+            log_dir=fp8_log_dir,
+            default_logging_enabled=True,
+        )
     # Create a device mesh for DDP. While this isn't strictly necessary, it mirrors the device mesh we create for FSDP2
     # and MFSDP.
     device_mesh = init_device_mesh("cuda", mesh_shape=(dist_config.world_size,), mesh_dim_names=("ddp",))
@@ -83,6 +108,9 @@ def main(args: DictConfig) -> float | None:
     # Create optimizer.
     optimizer = AdamW(model.parameters(), **args.adamw_kwargs)
     scheduler = get_linear_schedule_with_warmup(optimizer, **args.lr_scheduler_kwargs)
+
+    if args.fp8_stats_config.enabled:
+        debug_api.infer_and_assign_layer_names(model)
 
     model = model.to(device=device)
     model = torch.nn.parallel.DistributedDataParallel(
@@ -134,6 +162,8 @@ def main(args: DictConfig) -> float | None:
             loss = outputs.loss
             loss.backward()
 
+            if args.fp8_stats_config.enabled:
+                debug_api.step()
             # Compute and clip gradient norms.
             total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
 
