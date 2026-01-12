@@ -150,7 +150,14 @@ class PerfLogger:
             metrics["train/global_step"] = torch.tensor(step, dtype=torch.int64)
 
             if self._dist_config.is_main_process():
-                wandb.log(metrics, step=step)
+                train_metrics = {k: v for k, v in metrics.items() if k.startswith("train/")}
+                val_metrics = {k: v for k, v in metrics.items() if k.startswith("val/")}
+
+                wandb.log(train_metrics, step=step)
+
+                if val_loss is not None and len(val_metrics) > 0:
+                    wandb.log(val_metrics, step=step)
+
                 self._progress_bar.update(self.logging_frequency)
                 self._progress_bar.set_postfix({"loss": outputs.loss.item()})
 
