@@ -35,9 +35,10 @@ requires_datacenter_hardware = pytest.mark.skipif(
     reason="Test requires datacenter hardware (H100, H200, B100, B200, B300)",
 )
 
+_fp8_support_result = check_fp8_support() if torch.cuda.is_available() else (False, "CUDA not available")
 requires_fp8 = pytest.mark.skipif(
-    not torch.cuda.is_available() or not check_fp8_support()[0],
-    reason="Test requires FP8 support: " + check_fp8_support()[1],
+    not torch.cuda.is_available() or not _fp8_support_result[0],
+    reason=f"Test requires FP8 support: {_fp8_support_result[1]}",
 )
 
 

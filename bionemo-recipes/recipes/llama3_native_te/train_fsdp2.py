@@ -22,6 +22,7 @@ from pathlib import Path
 import hydra
 import nvdlfw_inspect.api as debug_api
 import torch
+import transformer_engine
 import transformer_engine.pytorch
 from omegaconf import DictConfig, OmegaConf
 from torch.distributed.device_mesh import init_device_mesh
@@ -66,7 +67,8 @@ def main(args: DictConfig) -> float | None:
     # TE Debug feature logging - MUST be done BEFORE FSDP wrapping
     if args.fp8_stats_config.enabled and not args.fp8_config.enabled:
         raise ValueError(
-            "fp8_stats_config.enabled is true but fp8_config.enabled is false, please set fp8_config.enabled to true in the config if you wish to collect FP8 stats"
+            "fp8_stats_config.enabled is true but fp8_config.enabled is false, "
+            "please set fp8_config.enabled to true in the config if you wish to collect FP8 stats"
         )
 
     if args.fp8_stats_config.enabled:
@@ -82,9 +84,10 @@ def main(args: DictConfig) -> float | None:
         fp8_log_dir = os.path.join(fp8_log_dir, f"rank_{dist_config.rank}")
         os.makedirs(fp8_log_dir, exist_ok=True)
         logger.info(f"Logging FP8 stats to {fp8_log_dir}")
+        te_features_dir = str(Path(transformer_engine.__file__).parent / "debug" / "features")
         debug_api.initialize(
             config_file=fp8_stats_file,
-            feature_dirs=["/usr/local/lib/python3.12/dist-packages/transformer_engine/debug/features/"],
+            feature_dirs=[te_features_dir],
             log_dir=fp8_log_dir,
             default_logging_enabled=True,
         )
@@ -133,7 +136,7 @@ def main(args: DictConfig) -> float | None:
         model.to_empty(device=device)
         model.apply(model._init_weights)
 
-    # Assign names to layers so debug API can identify them - Must be done before FSDP wrapping
+    # Assign names to layers so debug API can identify them
     if args.fp8_stats_config.enabled:
         debug_api.infer_and_assign_layer_names(model)
 
@@ -198,14 +201,6 @@ def main(args: DictConfig) -> float | None:
             # Gradient accumulation - only step optimizer after accumulating gradients
             if micro_step % args.grad_acc_steps == 0:
                 micro_step = 0
-                # Step optimizer.
-                optimizer.step()
-                scheduler.step()
-
-                if args.fp8_stats_config.enabled:
-                    debug_api.step()
-
-                optimizer.zero_grad()
 
                 # Compute and clip gradient norms.
                 total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
@@ -213,6 +208,10 @@ def main(args: DictConfig) -> float | None:
                 # Step optimizer.
                 optimizer.step()
                 scheduler.step()
+
+                if args.fp8_stats_config.enabled:
+                    debug_api.step()
+
                 optimizer.zero_grad()
 
                 perf_logger.log_step(

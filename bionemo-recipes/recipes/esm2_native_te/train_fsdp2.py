@@ -21,6 +21,7 @@ from pathlib import Path
 import hydra
 import nvdlfw_inspect.api as debug_api
 import torch
+import transformer_engine
 import transformer_engine.pytorch
 from omegaconf import DictConfig, OmegaConf
 from torch.distributed.device_mesh import init_device_mesh
@@ -76,9 +77,10 @@ def main(args: DictConfig) -> float | None:
         fp8_log_dir = os.path.join(fp8_log_dir, f"rank_{dist_config.rank}")
         os.makedirs(fp8_log_dir, exist_ok=True)
         logger.info(f"Logging FP8 stats to {fp8_log_dir}")
+        te_features_dir = str(Path(transformer_engine.__file__).parent / "debug" / "features")
         debug_api.initialize(
             config_file=fp8_stats_file,
-            feature_dirs=["/usr/local/lib/python3.12/dist-packages/transformer_engine/debug/features/"],
+            feature_dirs=[te_features_dir],
             log_dir=fp8_log_dir,
             default_logging_enabled=True,
         )
@@ -128,7 +130,8 @@ def main(args: DictConfig) -> float | None:
         else:
             model.to_empty(device=device)
             model.apply(model._init_weights)
-    # Assign names to layers so debug API can identify them - Must be done before FSDP wrapping
+
+    # Assign names to layers so debug API can identify them
     if args.fp8_stats_config.enabled:
         debug_api.infer_and_assign_layer_names(model)
 

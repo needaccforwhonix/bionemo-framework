@@ -37,7 +37,7 @@ python train_fsdp2.py \
 fp8_stats_config.enabled=True # whether to log stats or not
 fp8_stats_config.fp8_log_dir=./logs/fp8_stats_logs_dummy # where to store the logs
 fp8_stats_config.fp8_stats_file=./fp8_stats.yaml # specifies what stats you want to run. Currently this is saved in this yaml file.
-fp8_config.enabled=True # set this to use FP8 otherwise stats logging wont work
+fp8_config.enabled=True # set this to use FP8 otherwise stats logging won't work
 ```
 
 Once the run is completed. The `fp8_stats_config.fp8_log_dir` should have several directories under it. It should look like this
@@ -50,7 +50,7 @@ Once the run is completed. The `fp8_stats_config.fp8_log_dir` should have severa
         └── nvdlfw_inspect_globalrank-0.log
 ```
 
-Here we can see that there are directories for each rank. This is intended in case one wants to do a rank by rank analysis.
+Here we can see that there are directories for each rank. This is intended in case one wants to do a rank-by-rank analysis.
 As we can see, there are `inspect_logs` and `inspect_statistics_logs`. The `inspect_logs` will tell you what layer names are being tracked as well as what tensor values are being logged.
 The `inspect_statistics_logs` holds the actual stats for the runs, which should have a value for every tracked tensor at iterations specified by the `freq` parameter in the log config file (specified by `fp8_stats_config.fp8_stats_file`).
 
@@ -355,7 +355,7 @@ ______________________________________________________________________
 
 ### Q: Can I change the color scale?
 
-**A:** Yes! Edit line 342 in `analyze_and_create_heatmap.py`:
+**A:** Yes! Edit the `max_val` variable in the `create_heatmap` function in `analyze_and_create_heatmap.py`:
 
 ```python
 max_val = min(6, pivot_sample.values.max())  # Change 6 to your max
